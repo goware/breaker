@@ -8,7 +8,7 @@ import (
 	"github.com/goware/superr"
 )
 
-var ErrFail = errors.New("breaker: failed after all attempts")
+var ErrExhaustedRetries = errors.New("breaker: exhausted all retry attempts")
 
 // ExpBackoffRetry will wait `backoff*factor**retry` up to `maxTries`
 // `maxTries = 1` means retry only once when an error occurs.
@@ -45,7 +45,7 @@ func ExpBackoffRetry(ctx context.Context, fn func(ctx context.Context) error, lo
 			if log != nil {
 				log.Errorf("breaker: exhausted after max number of retries %d. fail :(", maxTries)
 			}
-			return superr.New(ErrFail, err)
+			return superr.New(ErrExhaustedRetries, err)
 		}
 
 		// Sleep and try again.
