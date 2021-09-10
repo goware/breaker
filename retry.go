@@ -8,7 +8,10 @@ import (
 	"github.com/goware/superr"
 )
 
-var ErrHitMaxRetries = errors.New("breaker: hit max retries")
+var (
+	ErrFatal         = errors.New("breaker: fatal error")
+	ErrHitMaxRetries = errors.New("breaker: hit max retries")
+)
 
 // ExpBackoffRetry will wait `backoff*factor**retry` up to `maxTries`
 // `maxTries = 1` means retry only once when an error occurs.
@@ -29,6 +32,11 @@ func ExpBackoffRetry(ctx context.Context, fn func(ctx context.Context) error, lo
 		}
 
 		// If we failed for some reason, exp backoff and retry.
+
+		// Check if is fatal error and should stop immediately
+		if errors.Is(err, ErrFatal) {
+			return err
+		}
 
 		// Reset try counter if some time has passed.
 		if time.Now().Sub(t) > 2*backoff {
