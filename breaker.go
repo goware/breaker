@@ -50,7 +50,7 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		default:
 		}
 
