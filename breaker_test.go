@@ -2,11 +2,13 @@ package breaker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/goware/superr"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -60,6 +62,7 @@ func TestBreakerDo(t *testing.T) {
 		return fmt.Errorf("error")
 	})
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrHitMaxRetries))
 
 	mLog.AssertExpectations(t)
 
@@ -72,6 +75,7 @@ func TestBreakerDo(t *testing.T) {
 		return fmt.Errorf("error")
 	})
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrHitMaxRetries))
 
 	mLog.AssertExpectations(t)
 
