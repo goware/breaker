@@ -66,16 +66,16 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 			return err
 		}
 
-		if b.log != nil {
-			b.log.Warnf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", err, time.Duration(int64(delay)).String(), try+1)
-		}
-
 		// Move on if we have tried a few times.
 		if try >= b.maxTries {
 			if b.log != nil {
 				b.log.Errorf("breaker: exhausted after max number of retries %d. fail :(", b.maxTries)
 			}
 			return superr.New(ErrHitMaxRetries, err)
+		}
+
+		if b.log != nil {
+			b.log.Warnf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", err, time.Duration(int64(delay)).String(), try+1)
 		}
 
 		// Sleep and try again.
