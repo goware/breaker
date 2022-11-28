@@ -54,7 +54,6 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		default:
 		}
 
-		t := time.Now()
 		err := fn()
 		if err == nil {
 			return nil
@@ -65,12 +64,6 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		// Check if is fatal error and should stop immediately
 		if errors.Is(err, ErrFatal) {
 			return err
-		}
-
-		// Reset try counter if some time has passed.
-		if time.Now().Sub(t) > 2*b.backoff {
-			delay = float64(b.backoff)
-			try = 0
 		}
 
 		if b.log != nil {
