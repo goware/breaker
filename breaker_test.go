@@ -111,7 +111,7 @@ func TestBreakerDo(t *testing.T) {
 	mLog.AssertExpectations(t)
 
 	// ErrFatal break circuit right away
-	err = br.Do(ctx, func() error {
+	err = br.Do(context.Background(), func() error {
 		return superr.Wrap(ErrFatal, fmt.Errorf("error"))
 	})
 	require.Error(t, err)
