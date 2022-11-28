@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goware/superr"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -104,6 +105,14 @@ func TestBreakerDo(t *testing.T) {
 
 	err = br.Do(ctx, func() error {
 		return nil
+	})
+	require.Error(t, err)
+
+	mLog.AssertExpectations(t)
+
+	// ErrFatal break circuit right away
+	err = br.Do(ctx, func() error {
+		return superr.Wrap(ErrFatal, fmt.Errorf("error"))
 	})
 	require.Error(t, err)
 
