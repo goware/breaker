@@ -1,6 +1,6 @@
 module github.com/goware/breaker
 
-go 1.21
+go 1.18
 
 require (
 	github.com/goware/logger v0.3.0
