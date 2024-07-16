@@ -5,8 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"log/slog"
-
+	"github.com/goware/logger"
 	"github.com/goware/superr"
 )
 
@@ -16,15 +15,15 @@ var (
 )
 
 type Breaker struct {
-	log      Logger
+	log      logger.Logger
 	backoff  time.Duration
 	factor   float64
 	maxTries int
 }
 
 // use *slog.Logger as logger
-func Default(optLog ...Logger) *Breaker {
-	var log Logger
+func Default(optLog ...logger.Logger) *Breaker {
+	var log logger.Logger
 	if len(optLog) > 0 {
 		log = optLog[0]
 	}
@@ -37,7 +36,7 @@ func Default(optLog ...Logger) *Breaker {
 }
 
 // use *slog.Logger as logger
-func New(log Logger, backoff time.Duration, factor float64, maxTries int) *Breaker {
+func New(log logger.Logger, backoff time.Duration, factor float64, maxTries int) *Breaker {
 	return &Breaker{
 		log:      log,
 		backoff:  backoff,
@@ -73,13 +72,13 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		// Move on if we have tried a few times.
 		if try >= b.maxTries {
 			if b.log != nil {
-				b.log.Error("breaker: exhausted after max number of retries", slog.Int("maxTries", b.maxTries))
+				b.log.Errorf("breaker: exhausted after max number of retries maxTries=(%d)", b.maxTries)
 			}
 			return superr.New(ErrHitMaxRetries, err)
 		}
 
 		if b.log != nil {
-			b.log.Warn("breaker: fn failed, trying again", slog.String("backOffDelay", time.Duration(int64(delay)).String()), slog.Int("try", try+1), slog.Any("error", err))
+			b.log.Warnf("breaker: fn failed, trying again backOffDelay=(%d), try=(%d), error=(%v)", time.Duration(int64(delay)).String(), try+1, err)
 		}
 
 		// Sleep and try again.
@@ -90,6 +89,6 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 }
 
 // use *slog.Logger as logger
-func Do(ctx context.Context, fn func() error, log Logger, backoff time.Duration, factor float64, maxTries int) error {
+func Do(ctx context.Context, fn func() error, log logger.Logger, backoff time.Duration, factor float64, maxTries int) error {
 	return New(log, backoff, factor, maxTries).Do(ctx, fn)
 }
