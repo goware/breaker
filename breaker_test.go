@@ -17,11 +17,11 @@ type MockLogger struct {
 	mock.Mock
 }
 
-func (m *MockLogger) Warn(msg string, args ...interface{}) {
+func (m *MockLogger) Warn(msg string, args ...any) {
 	m.Called(msg, args)
 }
 
-func (m *MockLogger) Error(msg string, args ...interface{}) {
+func (m *MockLogger) Error(msg string, args ...any) {
 	m.Called(msg, args)
 }
 
