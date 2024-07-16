@@ -79,7 +79,7 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		}
 
 		if b.log != nil {
-			b.log.Warn("breaker: fn failed, trying again", slog.String("backingOffDelay", time.Duration(int64(delay)).String()), slog.Int("retryCount", try+1), slog.Any("error", err))
+			b.log.Warn("breaker: fn failed, trying again", slog.String("backOffDelay", time.Duration(int64(delay)).String()), slog.Int("try", try+1), slog.Any("error", err))
 		}
 
 		// Sleep and try again.
