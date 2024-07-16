@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"log/slog"
+
 	"github.com/goware/superr"
 )
 
@@ -69,13 +71,13 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		// Move on if we have tried a few times.
 		if try >= b.maxTries {
 			if b.log != nil {
-				b.log.Errorf("breaker: exhausted after max number of retries %d. fail :(", b.maxTries)
+				b.log.Error("breaker: exhausted after max number of retries", slog.Int("maxTries", b.maxTries))
 			}
 			return superr.New(ErrHitMaxRetries, err)
 		}
 
 		if b.log != nil {
-			b.log.Warnf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", err, time.Duration(int64(delay)).String(), try+1)
+			b.log.Warn("breaker: fn failed, trying again", slog.String("backingOffDelay", time.Duration(int64(delay)).String()), slog.Int("retryCount", try+1), slog.Any("error", err))
 		}
 
 		// Sleep and try again.
