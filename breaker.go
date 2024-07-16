@@ -22,6 +22,7 @@ type Breaker struct {
 	maxTries int
 }
 
+// use *slog.Logger as logger
 func Default(optLog ...Logger) *Breaker {
 	var log Logger
 	if len(optLog) > 0 {
@@ -35,6 +36,7 @@ func Default(optLog ...Logger) *Breaker {
 	}
 }
 
+// use *slog.Logger as logger
 func New(log Logger, backoff time.Duration, factor float64, maxTries int) *Breaker {
 	return &Breaker{
 		log:      log,
@@ -87,6 +89,7 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 	}
 }
 
+// use *slog.Logger as logger
 func Do(ctx context.Context, fn func() error, log Logger, backoff time.Duration, factor float64, maxTries int) error {
 	return New(log, backoff, factor, maxTries).Do(ctx, fn)
 }
