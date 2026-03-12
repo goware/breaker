@@ -52,6 +52,8 @@ type Outcome struct {
 	Latency  time.Duration // wall-clock time from start to return
 }
 
+// Default returns a Breaker with sensible defaults: 1s backoff, 2x factor,
+// 15 retries, no jitter. An optional logger may be provided for retry events.
 func Default(optLog ...*slog.Logger) *Breaker {
 	var log *slog.Logger
 	if len(optLog) > 0 {
@@ -65,6 +67,9 @@ func Default(optLog ...*slog.Logger) *Breaker {
 	}
 }
 
+// New creates a Breaker with the given backoff, exponential factor, and maximum
+// number of retries. Functional options (e.g. WithJitter) can be appended to
+// customise behaviour. The logger may be nil to suppress retry log output.
 func New(log *slog.Logger, backoff time.Duration, factor float64, maxTries int, opts ...Option) *Breaker {
 	b := &Breaker{
 		log:      log,
@@ -189,6 +194,7 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// Do is a convenience wrapper that creates a one-shot Breaker and calls Do on it.
 func Do(ctx context.Context, fn func() error, log *slog.Logger, backoff time.Duration, factor float64, maxTries int, opts ...Option) error {
 	return New(log, backoff, factor, maxTries, opts...).Do(ctx, fn)
 }
