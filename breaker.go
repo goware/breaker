@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/goware/superr"
@@ -15,11 +16,39 @@ var (
 	ErrHitMaxRetries = errors.New("breaker: hit max retries")
 )
 
+// Breaker is an exponential-backoff-retry caller with optional jitter.
 type Breaker struct {
 	log      *slog.Logger
 	backoff  time.Duration
 	factor   float64
+	jitter   float64 // jitter fraction in [0, 1]; 0 means no jitter (deterministic)
 	maxTries int
+}
+
+// Option configures a Breaker.
+type Option func(*Breaker)
+
+// WithJitter sets the jitter fraction applied to each backoff delay.
+// A value of 0.1 means ±10% randomisation around the computed delay.
+// The value is clamped to the range [0, 1].
+func WithJitter(fraction float64) Option {
+	return func(b *Breaker) {
+		if fraction < 0 {
+			fraction = 0
+		}
+		if fraction > 1 {
+			fraction = 1
+		}
+		b.jitter = fraction
+	}
+}
+
+// Outcome holds metadata about a Do invocation.
+type Outcome struct {
+	Err      error
+	Attempts int           // total number of fn invocations
+	Retried  bool          // true if fn was called more than once
+	Latency  time.Duration // wall-clock time from start to return
 }
 
 func Default(optLog ...*slog.Logger) *Breaker {
@@ -35,58 +64,123 @@ func Default(optLog ...*slog.Logger) *Breaker {
 	}
 }
 
-func New(log *slog.Logger, backoff time.Duration, factor float64, maxTries int) *Breaker {
-	return &Breaker{
+func New(log *slog.Logger, backoff time.Duration, factor float64, maxTries int, opts ...Option) *Breaker {
+	b := &Breaker{
 		log:      log,
 		backoff:  backoff,
 		factor:   factor,
 		maxTries: maxTries,
 	}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
-// Do is an exponential-backoff-retry caller which will wait `backoff*factor**retry` up to `maxTries`
+// Do is an exponential-backoff-retry caller which will wait `backoff*factor**retry` up to `maxTries`.
 // `maxTries = 1` means retry only once when an error occurs.
+// Backoff sleeps respect context cancellation.
 func (b *Breaker) Do(ctx context.Context, fn func() error) error {
+	out := b.DoWithOutcome(ctx, fn)
+	return out.Err
+}
+
+// DoWithOutcome behaves like Do but returns an Outcome with attempt and timing metadata.
+func (b *Breaker) DoWithOutcome(ctx context.Context, fn func() error) Outcome {
+	start := time.Now()
 	delay := float64(b.backoff)
 	try := 0
+
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return Outcome{
+				Err:      ctx.Err(),
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
 		default:
 		}
 
 		err := fn()
-		if err == nil {
-			return nil
-		}
+		try++
 
-		// If we failed for some reason, exp backoff and retry.
+		if err == nil {
+			return Outcome{
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
+		}
 
 		// Check if is fatal error and should stop immediately
 		if errors.Is(err, ErrFatal) {
-			return err
+			return Outcome{
+				Err:      err,
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
 		}
 
-		// Move on if we have tried a few times.
-		if try >= b.maxTries {
+		// Move on if we have tried enough times.
+		if try > b.maxTries {
 			if b.log != nil {
 				b.log.Error(fmt.Sprintf("breaker: exhausted after max number of retries %d. fail :(", b.maxTries))
 			}
-			return superr.New(ErrHitMaxRetries, err)
+			return Outcome{
+				Err:      superr.New(ErrHitMaxRetries, err),
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
 		}
+
+		sleepDur := b.applyJitter(time.Duration(int64(delay)))
 
 		if b.log != nil {
-			b.log.Warn(fmt.Sprintf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", err, time.Duration(int64(delay)).String(), try+1))
+			b.log.Warn(fmt.Sprintf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", err, sleepDur.String(), try))
 		}
 
-		// Sleep and try again.
-		time.Sleep(time.Duration(int64(delay)))
+		// Sleep with context awareness.
+		if !sleepContext(ctx, sleepDur) {
+			return Outcome{
+				Err:      ctx.Err(),
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
+		}
+
 		delay *= b.factor
-		try++
 	}
 }
 
-func Do(ctx context.Context, fn func() error, log *slog.Logger, backoff time.Duration, factor float64, maxTries int) error {
-	return New(log, backoff, factor, maxTries).Do(ctx, fn)
+// applyJitter randomises duration by ±jitter fraction. With jitter=0 it
+// returns d unchanged (fully deterministic, backward-compatible).
+func (b *Breaker) applyJitter(d time.Duration) time.Duration {
+	if b.jitter <= 0 {
+		return d
+	}
+	// rand in [1-jitter, 1+jitter]
+	multiplier := 1 - b.jitter + 2*b.jitter*rand.Float64() //nolint:gosec
+	return time.Duration(float64(d) * multiplier)
+}
+
+// sleepContext sleeps for d or until ctx is cancelled. Returns true if the
+// full sleep completed.
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func Do(ctx context.Context, fn func() error, log *slog.Logger, backoff time.Duration, factor float64, maxTries int, opts ...Option) error {
+	return New(log, backoff, factor, maxTries, opts...).Do(ctx, fn)
 }
