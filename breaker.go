@@ -2,10 +2,11 @@ package breaker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"time"
 
 	"github.com/goware/superr"
@@ -163,9 +164,16 @@ func (b *Breaker) applyJitter(d time.Duration) time.Duration {
 	if b.jitter <= 0 {
 		return d
 	}
-	// rand in [1-jitter, 1+jitter]
-	multiplier := 1 - b.jitter + 2*b.jitter*rand.Float64() //nolint:gosec
+	// multiplier in [1-jitter, 1+jitter]
+	multiplier := 1 - b.jitter + 2*b.jitter*cryptoFloat64()
 	return time.Duration(float64(d) * multiplier)
+}
+
+// cryptoFloat64 returns a cryptographically random float64 in [0, 1).
+func cryptoFloat64() float64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return float64(binary.LittleEndian.Uint64(b[:])>>11) / (1 << 53)
 }
 
 // sleepContext sleeps for d or until ctx is cancelled. Returns true if the

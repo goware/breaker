@@ -460,6 +460,23 @@ func TestSleepContext(t *testing.T) {
 	})
 }
 
+func TestCryptoFloat64(t *testing.T) {
+	for range 10000 {
+		v := cryptoFloat64()
+		assert.GreaterOrEqual(t, v, 0.0, "cryptoFloat64 must be >= 0")
+		assert.Less(t, v, 1.0, "cryptoFloat64 must be < 1")
+	}
+
+	// Statistical sanity: mean of 10k samples should be near 0.5
+	sum := 0.0
+	const n = 10000
+	for range n {
+		sum += cryptoFloat64()
+	}
+	mean := sum / n
+	assert.InDelta(t, 0.5, mean, 0.05, "mean of cryptoFloat64 samples should be near 0.5")
+}
+
 func TestDefaultBreaker(t *testing.T) {
 	t.Run("WithLogger", func(t *testing.T) {
 		handler := NewTestLogHandler()
