@@ -500,13 +500,14 @@ func TestRunWithOutcome(t *testing.T) {
 
 		br := New(nil, 50*time.Millisecond, 1, 3)
 		out := br.RunWithOutcome(ctx, func(_ int) Result {
+			t.Fatal("fn should not be called when context is already cancelled")
 			return OK()
 		})
 
-		// fn is called despite cancelled context (same as Do behaviour —
-		// context is checked before backoff sleep, not before first call)
-		assert.NoError(t, out.Err)
-		assert.Equal(t, 1, out.Attempts)
+		// Matches DoWithOutcome: returns ctx.Err() with Attempts=0
+		assert.ErrorIs(t, out.Err, context.Canceled)
+		assert.Equal(t, 0, out.Attempts)
+		assert.False(t, out.Retried)
 	})
 
 	t.Run("ContextCanceledDuringBackoff", func(t *testing.T) {

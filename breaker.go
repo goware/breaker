@@ -193,6 +193,19 @@ func (b *Breaker) RunWithOutcome(ctx context.Context, fn func(attempt int) Resul
 	var lastErr error
 
 	for try := range b.maxTries + 1 {
+		// Check for context cancellation before each attempt,
+		// including the first — matching DoWithOutcome behaviour.
+		select {
+		case <-ctx.Done():
+			return Outcome{
+				Err:      ctx.Err(),
+				Attempts: try,
+				Retried:  try > 1,
+				Latency:  time.Since(start),
+			}
+		default:
+		}
+
 		if try > 0 {
 			sleepDur := b.applyJitter(time.Duration(int64(delay)))
 
