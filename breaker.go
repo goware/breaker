@@ -44,7 +44,23 @@ func WithJitter(fraction float64) Option {
 	}
 }
 
-// Outcome holds metadata about a Do invocation.
+// Result holds the outcome of a single attempt. The caller decides whether the
+// error is retryable by setting Retryable to true. Used with Run/RunWithOutcome.
+type Result struct {
+	Err       error
+	Retryable bool
+}
+
+// OK returns a successful (non-retryable) Result.
+func OK() Result { return Result{} }
+
+// Fail returns a non-retryable error Result that stops the retry loop immediately.
+func Fail(err error) Result { return Result{Err: err} }
+
+// Retry returns a retryable error Result that signals the operation should be retried.
+func Retry(err error) Result { return Result{Err: err, Retryable: true} }
+
+// Outcome holds metadata about a Do or Run invocation.
 type Outcome struct {
 	Err      error
 	Attempts int           // total number of fn invocations
@@ -160,6 +176,73 @@ func (b *Breaker) DoWithOutcome(ctx context.Context, fn func() error) Outcome {
 		}
 
 		delay *= b.factor
+	}
+}
+
+// Run executes fn with exponential-backoff retries. Unlike Do, the caller
+// explicitly controls retryability by returning a Result (OK, Fail, or Retry).
+// The attempt number (0-indexed) is passed to fn for logging or adaptive logic.
+func (b *Breaker) Run(ctx context.Context, fn func(attempt int) Result) error {
+	return b.RunWithOutcome(ctx, fn).Err
+}
+
+// RunWithOutcome behaves like Run but returns an Outcome with attempt and timing metadata.
+func (b *Breaker) RunWithOutcome(ctx context.Context, fn func(attempt int) Result) Outcome {
+	start := time.Now()
+	delay := float64(b.backoff)
+	var lastErr error
+
+	for try := range b.maxTries + 1 {
+		if try > 0 {
+			sleepDur := b.applyJitter(time.Duration(int64(delay)))
+
+			if b.log != nil {
+				b.log.Warn(fmt.Sprintf("breaker: fn failed: '%v' - backing off for %v and trying again (retry #%d)", lastErr, sleepDur.String(), try))
+			}
+
+			if !sleepContext(ctx, sleepDur) {
+				return Outcome{
+					Err:      ctx.Err(),
+					Attempts: try,
+					Retried:  try > 1,
+					Latency:  time.Since(start),
+				}
+			}
+
+			delay *= b.factor
+		}
+
+		r := fn(try)
+
+		if r.Err == nil {
+			return Outcome{
+				Attempts: try + 1,
+				Retried:  try > 0,
+				Latency:  time.Since(start),
+			}
+		}
+
+		if !r.Retryable {
+			return Outcome{
+				Err:      r.Err,
+				Attempts: try + 1,
+				Retried:  try > 0,
+				Latency:  time.Since(start),
+			}
+		}
+
+		lastErr = r.Err
+	}
+
+	if b.log != nil {
+		b.log.Error(fmt.Sprintf("breaker: exhausted after max number of retries %d. fail :(", b.maxTries))
+	}
+
+	return Outcome{
+		Err:      superr.New(ErrHitMaxRetries, lastErr),
+		Attempts: b.maxTries + 1,
+		Retried:  b.maxTries > 0,
+		Latency:  time.Since(start),
 	}
 }
 

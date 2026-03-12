@@ -384,6 +384,190 @@ func TestDoWithOutcome(t *testing.T) {
 	})
 }
 
+func TestRun(t *testing.T) {
+	t.Run("SuccessFirstAttempt", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+
+		err := br.Run(context.Background(), func(attempt int) Result {
+			assert.Equal(t, 0, attempt)
+			return OK()
+		})
+
+		assert.NoError(t, err)
+	})
+
+	t.Run("SuccessAfterRetry", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+
+		err := br.Run(context.Background(), func(attempt int) Result {
+			if attempt < 2 {
+				return Retry(fmt.Errorf("transient"))
+			}
+			return OK()
+		})
+
+		assert.NoError(t, err)
+	})
+
+	t.Run("NonRetryableError", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+		count := 0
+
+		err := br.Run(context.Background(), func(_ int) Result {
+			count++
+			return Fail(fmt.Errorf("bad request"))
+		})
+
+		assert.Error(t, err)
+		assert.EqualError(t, err, "bad request")
+		assert.Equal(t, 1, count, "should not retry on Fail")
+	})
+
+	t.Run("ExhaustedRetries", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 2)
+
+		err := br.Run(context.Background(), func(_ int) Result {
+			return Retry(fmt.Errorf("fail"))
+		})
+
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrHitMaxRetries)
+	})
+}
+
+func TestRunWithOutcome(t *testing.T) {
+	t.Run("SuccessFirstAttempt", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+
+		out := br.RunWithOutcome(context.Background(), func(_ int) Result {
+			return OK()
+		})
+
+		assert.NoError(t, out.Err)
+		assert.Equal(t, 1, out.Attempts)
+		assert.False(t, out.Retried)
+		assert.Greater(t, out.Latency, time.Duration(0))
+	})
+
+	t.Run("SuccessAfterRetries", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+
+		out := br.RunWithOutcome(context.Background(), func(attempt int) Result {
+			if attempt < 2 {
+				return Retry(fmt.Errorf("transient"))
+			}
+			return OK()
+		})
+
+		assert.NoError(t, out.Err)
+		assert.Equal(t, 3, out.Attempts)
+		assert.True(t, out.Retried)
+		assert.GreaterOrEqual(t, out.Latency, 100*time.Millisecond)
+	})
+
+	t.Run("NonRetryableStopsImmediately", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 5)
+
+		out := br.RunWithOutcome(context.Background(), func(_ int) Result {
+			return Fail(fmt.Errorf("bad request"))
+		})
+
+		assert.Error(t, out.Err)
+		assert.Equal(t, 1, out.Attempts)
+		assert.False(t, out.Retried)
+	})
+
+	t.Run("ExhaustedRetries", func(t *testing.T) {
+		handler := NewTestLogHandler()
+		logger := slog.New(handler)
+		br := New(logger, 50*time.Millisecond, 1, 2)
+
+		out := br.RunWithOutcome(context.Background(), func(_ int) Result {
+			return Retry(fmt.Errorf("fail"))
+		})
+
+		assert.Error(t, out.Err)
+		assert.ErrorIs(t, out.Err, ErrHitMaxRetries)
+		assert.Equal(t, 3, out.Attempts)
+		assert.True(t, out.Retried)
+		assert.Equal(t, 2, handler.CountLevel(slog.LevelWarn))
+		assert.Equal(t, 1, handler.CountLevel(slog.LevelError))
+	})
+
+	t.Run("ContextCanceledBeforeStart", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		br := New(nil, 50*time.Millisecond, 1, 3)
+		out := br.RunWithOutcome(ctx, func(_ int) Result {
+			return OK()
+		})
+
+		// fn is called despite cancelled context (same as Do behaviour —
+		// context is checked before backoff sleep, not before first call)
+		assert.NoError(t, out.Err)
+		assert.Equal(t, 1, out.Attempts)
+	})
+
+	t.Run("ContextCanceledDuringBackoff", func(t *testing.T) {
+		br := New(nil, 5*time.Second, 1, 3)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		start := time.Now()
+		out := br.RunWithOutcome(ctx, func(_ int) Result {
+			return Retry(fmt.Errorf("transient"))
+		})
+
+		elapsed := time.Since(start)
+		assert.ErrorIs(t, out.Err, context.DeadlineExceeded)
+		assert.Equal(t, 1, out.Attempts)
+		assert.Less(t, elapsed, 1*time.Second)
+	})
+
+	t.Run("AttemptNumberPassedCorrectly", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 3)
+		var seen []int
+
+		br.RunWithOutcome(context.Background(), func(attempt int) Result {
+			seen = append(seen, attempt)
+			if attempt < 3 {
+				return Retry(fmt.Errorf("transient"))
+			}
+			return OK()
+		})
+
+		assert.Equal(t, []int{0, 1, 2, 3}, seen)
+	})
+
+	t.Run("NoRetries", func(t *testing.T) {
+		br := New(nil, 50*time.Millisecond, 1, 0) // maxTries=0 means only 1 attempt
+
+		out := br.RunWithOutcome(context.Background(), func(_ int) Result {
+			return Retry(fmt.Errorf("fail"))
+		})
+
+		assert.Error(t, out.Err)
+		assert.ErrorIs(t, out.Err, ErrHitMaxRetries)
+		assert.Equal(t, 1, out.Attempts)
+		assert.False(t, out.Retried)
+	})
+
+	t.Run("LatencyTracksFullDuration", func(t *testing.T) {
+		br := New(nil, 100*time.Millisecond, 1, 1)
+
+		out := br.RunWithOutcome(context.Background(), func(attempt int) Result {
+			if attempt == 0 {
+				return Retry(fmt.Errorf("transient"))
+			}
+			return OK()
+		})
+
+		assert.NoError(t, out.Err)
+		assert.GreaterOrEqual(t, out.Latency, 90*time.Millisecond)
+	})
+}
+
 func TestPackageLevelDo(t *testing.T) {
 	t.Run("WithJitter", func(t *testing.T) {
 		count := 0
