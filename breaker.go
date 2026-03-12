@@ -210,6 +210,17 @@ func (b *Breaker) RunWithOutcome(ctx context.Context, fn func(attempt int) Resul
 			}
 
 			delay *= b.factor
+		} else {
+			// First attempt: check for pre-cancelled context before calling fn,
+			// matching DoWithOutcome's behavior.
+			select {
+			case <-ctx.Done():
+				return Outcome{
+					Err:     ctx.Err(),
+					Latency: time.Since(start),
+				}
+			default:
+			}
 		}
 
 		r := fn(try)
