@@ -278,11 +278,14 @@ func cryptoFloat64() float64 {
 // sleepContext sleeps for d or until ctx is cancelled. Returns true if the
 // full sleep completed.
 func sleepContext(ctx context.Context, d time.Duration) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
 	case <-t.C:
-		return true
+		return ctx.Err() == nil
 	case <-ctx.Done():
 		return false
 	}
