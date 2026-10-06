@@ -647,6 +647,27 @@ func TestSleepContext(t *testing.T) {
 	})
 }
 
+func TestRunCanceledWithImmediateBackoff(t *testing.T) {
+	for _, backoff := range []time.Duration{0, -time.Nanosecond} {
+		t.Run(backoff.String(), func(t *testing.T) {
+			for range 1000 {
+				ctx, cancel := context.WithCancel(context.Background())
+				calls := 0
+				out := New(nil, backoff, 1, 3).RunWithOutcome(ctx, func(int) Result {
+					calls++
+					cancel()
+					return Retry(errors.New("transient"))
+				})
+				cancel()
+				require.ErrorIs(t, out.Err, context.Canceled)
+				require.Equal(t, 1, calls, "cancellation must prevent another attempt")
+				require.Equal(t, 1, out.Attempts)
+				require.False(t, out.Retried)
+			}
+		})
+	}
+}
+
 func TestCryptoFloat64(t *testing.T) {
 	for range 10000 {
 		v := cryptoFloat64()
